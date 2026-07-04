@@ -24,6 +24,13 @@ public class GrassSpawner : MonoBehaviour
     [Range(0f, 0.5f)]
     public float heightVariation = 0.25f;
 
+    [Header("Settlement Zones")]
+    [Tooltip("Auto-found if left empty. Grass density inside reserved village zones " +
+             "is multiplied by the value below so future build areas stay clear.")]
+    public SettlementZoneFinder settlementZones;
+    [Range(0f, 1f)]
+    public float settlementDensityMultiplier = 0.2f;
+
     private Mesh              bladeMesh;
     private List<Matrix4x4[]> batches = new List<Matrix4x4[]>();
     private const int         BATCH   = 1023;
@@ -33,6 +40,16 @@ public class GrassSpawner : MonoBehaviour
     public void SpawnGrass()
     {
         batches.Clear();
+
+        // Procedural placeholder blades are RETIRED (design decision): grass must be
+        // a real asset placed through the PlacementRule system (Rule_Grass). This
+        // legacy spawner only clears its old batches and exits.
+        Debug.Log("[GrassSpawner] Prosedürel çim devre dışı — çim, Rule_Grass placement " +
+                  "rule'una prefab atanınca RuleBasedSpawner üzerinden spawn olur.");
+        if (batches.Count == 0) return;
+
+        if (settlementZones == null)
+            settlementZones = FindObjectOfType<SettlementZoneFinder>();
 
         if (mapGenerator == null || mapGenerator.latestNoiseMap == null)
         {
@@ -103,16 +120,19 @@ public class GrassSpawner : MonoBehaviour
         }
 
         // Terrain world scale (lossyScale captures all parent transforms).
-        // With Mesh.localScale = (10,10,10): cells are 10 world units wide,
-        // so jitter must be ×10 and blade sizes must be ×10 to remain visible.
-        float xzScale = meshTF.lossyScale.x;
+        // With supersampling, one heightmap cell spans lossyScale/mult world units,
+        // so both jitter width and per-cell blade count compensate by the multiplier
+        // to keep world-space grass density resolution-independent.
+        int   resMult = (mapGenerator != null) ? Mathf.Max(1, mapGenerator.meshResolutionMultiplier) : 1;
+        float xzScale = meshTF.lossyScale.x / resMult;
         float yScale  = meshTF.lossyScale.y;
+        int   effSubGrid = Mathf.Max(1, Mathf.RoundToInt((float)subGridSize / resMult));
 
         // ---- Sub-grid jitter loop ----
         // Each terrain vertex covers a (xzScale)-world-unit cell.
-        // We divide that cell into subGridSize×subGridSize sub-cells and place
-        // one blade randomly within each sub-cell → subGridSize² blades per vertex.
-        float cellStep = 1f / subGridSize;
+        // We divide that cell into effSubGrid×effSubGrid sub-cells and place
+        // one blade randomly within each sub-cell → effSubGrid² blades per vertex.
+        float cellStep = 1f / effSubGrid;
         float halfCell = 0.5f;
 
         var currentBatch = new List<Matrix4x4>(BATCH);
@@ -128,10 +148,17 @@ public class GrassSpawner : MonoBehaviour
                 // TransformPoint converts local vertex → world space, applying all transform scales.
                 Vector3 worldPos = meshTF.TransformPoint(meshVerts[y * mapWidth + x]);
 
-                for (int sy = 0; sy < subGridSize; sy++)
+                // Thin the grass carpet inside reserved settlement zones.
+                float cellDensity = 1f;
+                if (settlementZones != null && settlementZones.IsInsideAnyZone(worldPos))
+                    cellDensity = settlementDensityMultiplier;
+
+                for (int sy = 0; sy < effSubGrid; sy++)
                 {
-                    for (int sx = 0; sx < subGridSize; sx++)
+                    for (int sx = 0; sx < effSubGrid; sx++)
                     {
+                        if (cellDensity < 1f && Random.value > cellDensity) continue;
+
                         // Jitter in world units: the ±0.5 local-space offset is scaled by
                         // xzScale so blades spread across the full visible cell width.
                         float localX = (-halfCell + (sx + Random.value) * cellStep) * xzScale;
@@ -160,7 +187,7 @@ public class GrassSpawner : MonoBehaviour
         if (currentBatch.Count > 0)
             batches.Add(currentBatch.ToArray());
 
-        Debug.Log($"GrassSpawner: {totalBlades:N0} blades ({subGridSize}²={subGridSize * subGridSize}/cell) " +
+        Debug.Log($"GrassSpawner: {totalBlades:N0} blades ({effSubGrid}²={effSubGrid * effSubGrid}/cell) " +
                   $"across {batches.Count} GPU draw calls.");
     }
 

@@ -16,6 +16,15 @@ public class MapDisplay : MonoBehaviour
     public float maxAgentSlope    = 80f;
     public float agentClimbHeight = 5f;
 
+    [Tooltip("Clip the bake region so everything below the water surface is excluded — " +
+             "agents cannot enter the sea. Turn off to bake the whole mesh.")]
+    public bool excludeWaterFromNavMesh = true;
+    [Tooltip("World-space height above the water surface where the bake region starts.")]
+    public float waterClearance = 1f;
+
+    [HideInInspector]
+    public float waterSurfaceLocalY;   // set by DrawMesh from the generated MeshData
+
     // ------------------------------------------------------------------ //
 
     public void DrawTexture(Texture2D texture)
@@ -49,6 +58,19 @@ public class MapDisplay : MonoBehaviour
         {
             meshCollider.sharedMesh = null;
             meshCollider.sharedMesh = generatedMesh;
+        }
+
+        // Position the translucent water surface at the water line and size it to
+        // cover the whole island (plus a margin so no seabed pokes past the edge).
+        waterSurfaceLocalY = meshData.waterSurfaceLocalY;
+        WaterPlane water = FindObjectOfType<WaterPlane>();
+        if (water != null)
+        {
+            Transform tf = meshFilter.transform;
+            float worldWaterY = tf.position.y + waterSurfaceLocalY * tf.lossyScale.y;
+            Bounds b = generatedMesh.bounds;
+            float worldSize = Mathf.Max(b.size.x * tf.lossyScale.x, b.size.z * tf.lossyScale.z) * 1.05f;
+            water.Configure(worldWaterY, worldSize);
         }
 
         // NavMesh bake is intentionally deferred:
@@ -112,6 +134,17 @@ public class MapDisplay : MonoBehaviour
         Vector3   wSize   = Vector3.Scale(localB.size, ls);
         wSize.y           = Mathf.Max(wSize.y + 100f, 200f);                  // vertical padding
         Bounds bakeRegion = new Bounds(wCenter, wSize + new Vector3(50f, 0f, 50f));
+
+        // The terrain now continues below the water line as a seabed. Clip the bake
+        // region at the water SURFACE (stored per-mesh by DrawMesh) so the NavMesh
+        // covers dry land only — the WaterPlane object itself is never a source.
+        if (excludeWaterFromNavMesh)
+        {
+            float waterY  = tf.position.y + waterSurfaceLocalY * ls.y;
+            Vector3 bMin  = bakeRegion.min;
+            bMin.y        = Mathf.Max(bMin.y, waterY + waterClearance);
+            bakeRegion.SetMinMax(bMin, bakeRegion.max);
+        }
 
         Vector3    dataPosition = navMeshSurface.transform.position;   // = (0,0,0)
         Quaternion dataRotation = navMeshSurface.transform.rotation;   // = identity

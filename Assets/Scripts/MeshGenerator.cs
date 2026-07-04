@@ -3,7 +3,9 @@ using UnityEngine.Rendering;
 
 public static class MeshGenerator
 {
-    public static MeshData GenerateTerrainMesh(float[,] heightMap, float heightMultiplier, AnimationCurve _heightCurve, float waterLevel)
+    // vertexSpacing: local-space distance between neighbouring vertices. Pass 1/resolutionMultiplier
+    // when the heightmap was supersampled so the mesh keeps the same world footprint.
+    public static MeshData GenerateTerrainMesh(float[,] heightMap, float heightMultiplier, AnimationCurve _heightCurve, float waterLevel, float vertexSpacing = 1f)
     {
         // Copy curve so this method is safe even if called off the main thread later
         AnimationCurve heightCurve = (_heightCurve != null && _heightCurve.length > 0)
@@ -12,8 +14,8 @@ public static class MeshGenerator
 
         int width  = heightMap.GetLength(0);
         int height = heightMap.GetLength(1);
-        float topLeftX = (width  - 1) / -2f;
-        float topLeftZ = (height - 1) /  2f;
+        float topLeftX = (width  - 1) * vertexSpacing / -2f;
+        float topLeftZ = (height - 1) * vertexSpacing /  2f;
 
         MeshData meshData    = new MeshData(width, height);
         int      vertexIndex = 0;
@@ -24,12 +26,12 @@ public static class MeshGenerator
             {
                 float h = heightMap[x, y];
 
-                // Flatten everything below waterLevel to a perfectly flat water surface
-                if (h < waterLevel) h = waterLevel;
-
+                // No flattening below waterLevel any more: terrain under the water
+                // line stays as a natural seabed. The visible water surface is a
+                // separate translucent WaterPlane object placed at waterSurfaceY.
                 float vertexHeight = heightCurve.Evaluate(h) * heightMultiplier;
 
-                meshData.vertices[vertexIndex] = new Vector3(topLeftX + x, vertexHeight, topLeftZ - y);
+                meshData.vertices[vertexIndex] = new Vector3(topLeftX + x * vertexSpacing, vertexHeight, topLeftZ - y * vertexSpacing);
                 meshData.uvs[vertexIndex]      = new Vector2(x / (float)width, y / (float)height);
 
                 if (x < width - 1 && y < height - 1)
@@ -53,6 +55,11 @@ public static class MeshGenerator
                                                meshData.vertices[i].y - minY,
                                                meshData.vertices[i].z);
 
+        // Where the water SURFACE sits in the mesh's local space (after the minY
+        // shift). MapDisplay uses this to place the WaterPlane and to clip the
+        // NavMesh bake region above the water.
+        meshData.waterSurfaceLocalY = heightCurve.Evaluate(waterLevel) * heightMultiplier - minY;
+
         return meshData;
     }
 }
@@ -62,6 +69,7 @@ public class MeshData
     public Vector3[] vertices;
     public int[]     triangles;
     public Vector2[] uvs;
+    public float     waterSurfaceLocalY;   // water line in mesh local space
 
     int triangleIndex;
 
