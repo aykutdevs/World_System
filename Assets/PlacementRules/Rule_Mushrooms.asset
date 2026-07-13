@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d87d9ebf13b1cfc40a89da155b5cf707, type: 3}
+  m_Name: Rule_Mushrooms
+  m_EditorClassIdentifier: 
+  prefabs:
+  - {fileID: 1127315056602366, guid: 3052ada84e39ffd4fb3cc3cbb885d867, type: 3}
+  - {fileID: 1240686429475702, guid: 1530caefe50f68042978f4b8cd52a92b, type: 3}
+  allowedRegionKeywords:
+  - grass
+  minHeight: 0
+  maxHeight: 1
+  minSlopeAngle: 0
+  maxSlopeAngle: 25
+  density: 0.1
+  useClusterNoise: 1
+  clusterFrequency: 0.15
+  clusterThreshold: 0.6
+  minSpacing: 0.8
+  randomYRotation: 1
+  scaleRange: {x: 1.5, y: 3}
+  harvestableDef: {fileID: 0}
+  settlementDensityMultiplier: 0.15

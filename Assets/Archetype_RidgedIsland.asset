@@ -19,3 +19,5 @@ MonoBehaviour:
   heightMultiplierRange: {x: 25, y: 32}
   islandSizeRange: {x: 0.55, y: 0.7}
   coastlineNoiseRange: {x: 0.1, y: 0.22}
+  environmentalFactors:
+  - {fileID: 11400000, guid: ab3b257c5d43fc24195529f08736f536, type: 2}

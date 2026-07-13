@@ -1,0 +1,43 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c8e0134fadcd5a4f9420af58a2124b4, type: 3}
+  m_Name: BalikciKulubesi_Recipe
+  m_EditorClassIdentifier: 
+  displayName: BalikciKulubesi
+  rootPart: {fileID: 2299000164065654602, guid: 41e4b9d353917a54f96d6c6770841451, type: 3}
+  compatibilityTable: {fileID: 11400000, guid: 88e4a734c735e7b4a871c431f56fe7e3, type: 2}
+  steps:
+  - partPrefab: {fileID: 2299000164065654602, guid: 41e4b9d353917a54f96d6c6770841451, type: 3}
+    targetPartIndex: 0
+    targetPointName: Snap_R
+    partPointName: Snap_R
+    rollSteps: 1
+  - partPrefab: {fileID: 2299000164065654602, guid: 41e4b9d353917a54f96d6c6770841451, type: 3}
+    targetPartIndex: 1
+    targetPointName: Snap_L
+    partPointName: Snap_R
+    rollSteps: 1
+  - partPrefab: {fileID: 4088275749058482628, guid: 2302cd4745b3d3a43ab724e6ac1191b7, type: 3}
+    targetPartIndex: 2
+    targetPointName: Snap_L
+    partPointName: Snap_R
+    rollSteps: 1
+  - partPrefab: {fileID: 2865189353527940675, guid: f02b69c0d6ed84b4db660272e6a59323, type: 3}
+    targetPartIndex: 0
+    targetPointName: Snap_Roof
+    partPointName: Snap_Base
+    rollSteps: 0
+  - partPrefab: {fileID: 7780652583357947975, guid: 39780990afc0c5e4c8d9f919bd354235, type: 3}
+    targetPartIndex: 3
+    targetPointName: Snap_DoorSlot
+    partPointName: Snap_Frame
+    rollSteps: 0

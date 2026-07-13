@@ -15,8 +15,9 @@ public class MCPWorldAutomation : EditorWindow
 
     const string AutoBakePref  = "WorldAutomation.AutoBakeAfterRegenerate";
     const string DebugViewPref = "WorldAutomation.DebugViewMode";
+    const string FactorIdPref  = "WorldAutomation.DebugFactorId";
 
-    static readonly string[] DebugViewNames = { "Normal", "Walkability", "Regions" };
+    static readonly string[] DebugViewNames = { "Normal", "Walkability", "Regions", "Factor" };
 
     // High-contrast palette for the Regions debug view (index = region order).
     static readonly Color[] RegionDebugColors =
@@ -102,7 +103,9 @@ public class MCPWorldAutomation : EditorWindow
 
         if (GUILayout.Button("3 — Find Settlement Zones", GUILayout.Height(26)))
             FindSettlementZones();
-        if (GUILayout.Button("4 — Spawn Props (rule-based)", GUILayout.Height(26)))
+        if (GUILayout.Button("4 — Spawn Villages (seed-deterministic)", GUILayout.Height(26)))
+            SpawnVillages();
+        if (GUILayout.Button("5 — Spawn Props (rule-based)", GUILayout.Height(26)))
             SpawnProps();
 
         GUI.enabled = false;
@@ -178,10 +181,11 @@ public class MCPWorldAutomation : EditorWindow
 
         Debug.Log($"[WorldAutomation] Terrain mesh regenerated (seed {gen.lastGeneratedSeed}).");
 
-        // Auto-chained redistribution: zones → props follow every new island so old
-        // scatter never lingers. Grass is rule-based now (Rule_Grass placement rule)
-        // and spawns via SpawnProps once a real grass prefab is assigned.
+        // Auto-chained redistribution: zones → villages → props follow every new
+        // island so old scatter never lingers. Grass is rule-based now (Rule_Grass
+        // placement rule) and spawns via SpawnProps once a real grass prefab is assigned.
         FindSettlementZones();
+        SpawnVillages();
         SpawnProps();
 
         // Keep the active debug overlay in sync with the fresh terrain.
@@ -203,7 +207,8 @@ public class MCPWorldAutomation : EditorWindow
     {
         EditorGUILayout.HelpBox(
             "Normal = game colours.  Walkability = green (flat) → yellow → red (steep), blue water.\n" +
-            "Regions = flat high-contrast colour per region band.",
+            "Regions = flat high-contrast colour per region band.\n" +
+            "Factor = heatmap of an environmental factor (blue cold → red hot).",
             MessageType.None);
 
         int mode    = EditorPrefs.GetInt(DebugViewPref, 0);
@@ -212,6 +217,17 @@ public class MCPWorldAutomation : EditorWindow
         {
             EditorPrefs.SetInt(DebugViewPref, newMode);
             ApplyDebugView(newMode);
+        }
+
+        if (newMode == 3)
+        {
+            EditorGUILayout.BeginHorizontal();
+            string fid    = EditorPrefs.GetString(FactorIdPref, "temperature");
+            string newFid = EditorGUILayout.TextField("Show Factor:", fid);
+            if (newFid != fid) EditorPrefs.SetString(FactorIdPref, newFid);
+            if (GUILayout.Button("Apply", GUILayout.Width(60)))
+                ApplyDebugView(3);
+            EditorGUILayout.EndHorizontal();
         }
 
         SettlementZoneFinder zones = Object.FindObjectOfType<SettlementZoneFinder>();
@@ -248,6 +264,7 @@ public class MCPWorldAutomation : EditorWindow
         {
             case 1:  tex = BuildWalkabilityTexture(gen, display, noise, w, h); break;
             case 2:  tex = BuildRegionsTexture(gen, noise, w, h);              break;
+            case 3:  tex = BuildFactorTexture(gen, display, noise, w, h);      break;
             default: tex = TextureGenerator.TextureFromColourMap(gen.BuildColourMap(noise), w, h); break;
         }
         if (tex == null) return;
@@ -289,6 +306,69 @@ public class MCPWorldAutomation : EditorWindow
                 else if (angle <= 50f) cols[i] = Color.Lerp(mid,  steep, (angle - 35f) / 15f);
                 else                   cols[i] = steep;
             }
+        return TextureGenerator.TextureFromColourMap(cols, w, h);
+    }
+
+    // Chapter 7 — heatmap of one environmental factor sampled per terrain vertex
+    // (blue = min value on this island, red = max). Water cells stay dark blue.
+    static Texture2D BuildFactorTexture(MapGenerator gen, MapDisplay display,
+                                        float[,] noise, int w, int h)
+    {
+        WorldEnvironment env = Object.FindObjectOfType<WorldEnvironment>();
+        if (env == null)
+        {
+            Debug.LogWarning("[WorldAutomation] No WorldEnvironment in scene — add one for the Factor view.");
+            return null;
+        }
+        Mesh mesh = display.meshFilter != null ? display.meshFilter.sharedMesh : null;
+        if (mesh == null || mesh.vertexCount != w * h)
+        {
+            Debug.LogWarning("[WorldAutomation] Mesh out of sync with heightmap — regenerate first.");
+            return null;
+        }
+
+        string factorId = EditorPrefs.GetString(FactorIdPref, "temperature");
+        if (!env.HasFactor(factorId))
+        {
+            Debug.LogWarning($"[WorldAutomation] Factor '{factorId}' not defined for this world " +
+                             "(check the archetype's Environmental Factors list).");
+            return null;
+        }
+
+        Vector3[] verts = mesh.vertices;
+        Transform tf    = display.meshFilter.transform;
+
+        // Two passes: measure the value range on land, then colour-map it.
+        float[] values = new float[w * h];
+        float vMin = float.MaxValue, vMax = float.MinValue;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = y * w + x;
+                if (noise[x, y] < gen.waterLevel) continue;
+                values[i] = env.GetFactor(factorId, tf.TransformPoint(verts[i]));
+                vMin = Mathf.Min(vMin, values[i]);
+                vMax = Mathf.Max(vMax, values[i]);
+            }
+        if (vMin >= vMax) vMax = vMin + 0.001f;
+
+        Color water = new Color(0.08f, 0.15f, 0.35f);
+        Color cold  = new Color(0.20f, 0.40f, 1.00f);
+        Color midC  = new Color(0.95f, 0.95f, 0.30f);
+        Color hot   = new Color(1.00f, 0.20f, 0.10f);
+
+        Color[] cols = new Color[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = y * w + x;
+                if (noise[x, y] < gen.waterLevel) { cols[i] = water; continue; }
+                float t = Mathf.InverseLerp(vMin, vMax, values[i]);
+                cols[i] = t < 0.5f ? Color.Lerp(cold, midC, t * 2f)
+                                   : Color.Lerp(midC, hot, (t - 0.5f) * 2f);
+            }
+
+        Debug.Log($"[WorldAutomation] Factor '{factorId}' heatmap: min {vMin:F1} (blue) → max {vMax:F1} (red).");
         return TextureGenerator.TextureFromColourMap(cols, w, h);
     }
 
@@ -341,6 +421,17 @@ public class MCPWorldAutomation : EditorWindow
 
     // Procedural grass blades retired: grass now goes through the PlacementRule
     // system (Rule_Grass) like every other asset — no prefab, no spawn.
+
+    static void SpawnVillages()
+    {
+        VillageSpawner vs = Object.FindObjectOfType<VillageSpawner>();
+        if (vs == null)
+        {
+            Debug.LogWarning("[WorldAutomation] VillageSpawner not in scene — villages skipped.");
+            return;
+        }
+        vs.SpawnVillages();
+    }
 
     static void SpawnProps()
     {
@@ -443,6 +534,17 @@ public class MCPWorldAutomation : EditorWindow
                 ? "Settlement zones: none found yet (regenerate terrain)"
                 : $"Settlement zones: {zones.zones.Count} reserved (yellow circles in Scene view)";
             EditorGUILayout.LabelField(zoneInfo, EditorStyles.miniBoldLabel);
+        }
+
+        VillageSpawner villageSp = Object.FindObjectOfType<VillageSpawner>();
+        StatusLine("VillageSpawner in scene", villageSp != null);
+        if (villageSp != null)
+        {
+            int vbuildings = 0;
+            foreach (VillageSpawner.SpawnedVillage v in villageSp.villages) vbuildings += v.buildingCount;
+            EditorGUILayout.LabelField(
+                $"Villages: {villageSp.villages.Count} ({vbuildings} buildings, orange circles in Scene view)",
+                EditorStyles.miniBoldLabel);
         }
 
         // Repaint continuously so status stays live

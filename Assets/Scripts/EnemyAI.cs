@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.AI;
+using Core.FSM;
 
 // ---- WILDCUT — Yamyam (cannibal) enemy prototype ----
 //
@@ -51,12 +52,24 @@ public class EnemyAI : MonoBehaviour
     [Header("Catch")]
     public float catchDistance = 2.2f;
 
-    public EnemyState State { get; private set; } = EnemyState.Patrol;
+    [Header("World events (Chapters 9-10 — documentary hooks)")]
+    [Tooltip("Optional — chase start is broadcast here (the documentary camera " +
+             "will subscribe to the same channel later).")]
+    public WorldEventChannel eventChannel;
+    public string chaseStartEventId = "yamyam_chase_start";
+
+    [Header("Debug")]
+    [Tooltip("Log every state transition (Core.FSM transition log).")]
+    public bool logStateTransitions;
+
+    public EnemyState State => fsm != null ? fsm.CurrentId : EnemyState.Patrol;
     /// <summary>Exposed for tests: last destination requested from the NavMesh.</summary>
     public Vector3 LastMoveTarget { get; private set; }
 
     NavMeshAgent agent;
     PlayerController player;
+    StateMachine<EnemyState> fsm;
+    float distToPlayer;          // per-frame snapshot the state ticks read
     Vector3 home;
     Vector3 lastKnownPos;
     float lastSeenTime;
@@ -67,8 +80,25 @@ public class EnemyAI : MonoBehaviour
 
     // ------------------------------------------------------------------ //
 
+    // States wrap the existing per-state methods; Chase/Search entry setup
+    // (previously the EnterChase/EnterSearch prologues) runs via onEnter.
+    void EnsureStateMachine()
+    {
+        if (fsm != null) return;
+        fsm = new StateMachine<EnemyState>();
+        fsm.Add(EnemyState.Patrol, new DelegateState(onTick: _ => PatrolUpdate(distToPlayer)));
+        fsm.Add(EnemyState.Chase,  new DelegateState(onEnter: OnEnterChase, onTick: _ => ChaseUpdate(distToPlayer)));
+        fsm.Add(EnemyState.Search, new DelegateState(onEnter: OnEnterSearch, onTick: _ => SearchUpdate(distToPlayer)));
+        fsm.OnTransition += (from, to) =>
+        {
+            if (logStateTransitions) Debug.Log($"[EnemyAI] State {from} -> {to}");
+        };
+        fsm.SetState(EnemyState.Patrol);
+    }
+
     void Awake()
     {
+        EnsureStateMachine();
         agent = GetComponent<NavMeshAgent>();
         agent.height       = 2f;
         agent.radius       = 0.5f;
@@ -92,8 +122,9 @@ public class EnemyAI : MonoBehaviour
             agent.Warp(pos);
         else
             transform.position = pos;
-        home  = pos;
-        State = EnemyState.Patrol;
+        home = pos;
+        EnsureStateMachine();
+        fsm.SetState(EnemyState.Patrol);
     }
 
     // ------------------------------------------------------------------ //
@@ -108,14 +139,8 @@ public class EnemyAI : MonoBehaviour
             if (player == null) return;
         }
 
-        float dist = Vector3.Distance(transform.position, player.transform.position);
-
-        switch (State)
-        {
-            case EnemyState.Patrol: PatrolUpdate(dist); break;
-            case EnemyState.Chase:  ChaseUpdate(dist);  break;
-            case EnemyState.Search: SearchUpdate(dist); break;
-        }
+        distToPlayer = Vector3.Distance(transform.position, player.transform.position);
+        fsm.Tick(Time.deltaTime);
     }
 
     // ---- Patrol -------------------------------------------------------- //
@@ -124,7 +149,7 @@ public class EnemyAI : MonoBehaviour
     {
         agent.speed = patrolSpeed;
 
-        if (dist <= detectionRange) { EnterChase(); return; }
+        if (dist <= detectionRange) { fsm.SetState(EnemyState.Chase); return; }
 
         if (agent.pathPending || agent.remainingDistance > 1.5f) return;
 
@@ -142,12 +167,14 @@ public class EnemyAI : MonoBehaviour
 
     // ---- Chase --------------------------------------------------------- //
 
-    void EnterChase()
+    void OnEnterChase()
     {
-        State          = EnemyState.Chase;
         lastSeenTime   = Time.time;
         lastKnownPos   = player.transform.position;
         nextRepathTime = 0f;   // re-path immediately
+
+        if (eventChannel != null && !string.IsNullOrEmpty(chaseStartEventId))
+            eventChannel.Raise(chaseStartEventId, transform.position);
     }
 
     void ChaseUpdate(float dist)
@@ -166,7 +193,7 @@ public class EnemyAI : MonoBehaviour
             Debug.Log("[EnemyAI] Yamyam caught the player!");
         }
 
-        if (Time.time - lastSeenTime > lostSightDuration) { EnterSearch(); return; }
+        if (Time.time - lastSeenTime > lostSightDuration) { fsm.SetState(EnemyState.Search); return; }
 
         if (Time.time >= nextRepathTime)
         {
@@ -196,9 +223,8 @@ public class EnemyAI : MonoBehaviour
 
     // ---- Search -------------------------------------------------------- //
 
-    void EnterSearch()
+    void OnEnterSearch()
     {
-        State            = EnemyState.Search;
         searchPointsLeft = searchPointCount;
         MoveTo(lastKnownPos);   // first stop: where the player was last seen
     }
@@ -207,7 +233,7 @@ public class EnemyAI : MonoBehaviour
     {
         agent.speed = patrolSpeed * 1.4f;
 
-        if (dist <= detectionRange) { EnterChase(); return; }
+        if (dist <= detectionRange) { fsm.SetState(EnemyState.Chase); return; }
 
         if (agent.pathPending || agent.remainingDistance > 2f) return;
 
@@ -220,9 +246,9 @@ public class EnemyAI : MonoBehaviour
         }
         else
         {
-            State = EnemyState.Patrol;
-            home  = transform.position;   // adopt the area as the new patrol centre
+            home      = transform.position;   // adopt the area as the new patrol centre
             waitUntil = 0f;
+            fsm.SetState(EnemyState.Patrol);
         }
     }
 

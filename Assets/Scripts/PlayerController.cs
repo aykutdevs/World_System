@@ -1,9 +1,11 @@
 using UnityEngine;
+using Core.FSM;
 
 // ---- WILDCUT — First-person player controller ----
 // State machine per the design doc: Grounded / Airborne / Climbing are separate
 // states with their own update methods, so future states (swim, crouch, vault)
-// slot in without turning Update() into a monolith.
+// slot in without turning Update() into a monolith. The skeleton is the shared
+// Core.FSM StateMachine; the per-state methods below are unchanged behaviour.
 //
 // Movement uses Unity's CharacterController (not Rigidbody): on procedural mesh
 // colliders with steep slopes it needs no friction/mass tuning, never gets pushed
@@ -57,11 +59,18 @@ public class PlayerController : MonoBehaviour
     [HideInInspector] public bool externalJump;
     [HideInInspector] public float externalSwimVertical;   // -1 dive .. +1 rise
 
-    public PlayerState State { get; private set; } = PlayerState.Airborne;
+    [Header("Debug")]
+    [Tooltip("Log every state transition (Core.FSM transition log).")]
+    public bool logStateTransitions;
+
+    public PlayerState State => fsm != null ? fsm.CurrentId : PlayerState.Airborne;
     /// <summary>World-space velocity from the CharacterController (read by EnemyAI prediction).</summary>
     public Vector3 Velocity => controller != null ? controller.velocity : Vector3.zero;
 
     CharacterController controller;
+    StateMachine<PlayerState> fsm;
+    Vector2 frameMove;          // per-frame input snapshot the state ticks read
+    bool frameRun, frameJump;
     float verticalVelocity;
     float pitch;
     Vector3 spawnPosition;
@@ -69,8 +78,26 @@ public class PlayerController : MonoBehaviour
 
     // ------------------------------------------------------------------ //
 
+    // States wrap the existing per-state methods; input arrives via the
+    // frame* snapshot fields captured at the top of Update().
+    void EnsureStateMachine()
+    {
+        if (fsm != null) return;
+        fsm = new StateMachine<PlayerState>();
+        fsm.Add(PlayerState.Grounded, new DelegateState(onTick: _ => UpdateGrounded(frameMove, frameRun, frameJump)));
+        fsm.Add(PlayerState.Airborne, new DelegateState(onTick: _ => UpdateAirborne(frameMove)));
+        fsm.Add(PlayerState.Climbing, new DelegateState(onTick: _ => UpdateClimbing(frameMove, frameJump)));
+        fsm.Add(PlayerState.Swimming, new DelegateState(onTick: _ => UpdateSwimming(frameMove)));
+        fsm.OnTransition += (from, to) =>
+        {
+            if (logStateTransitions) Debug.Log($"[PlayerController] State {from} -> {to}");
+        };
+        fsm.SetState(PlayerState.Airborne);   // settle onto the ground on first frames
+    }
+
     void Awake()
     {
+        EnsureStateMachine();
         controller = GetComponent<CharacterController>();
         spawnPosition = transform.position;
         if (eye == null)
@@ -131,11 +158,12 @@ public class PlayerController : MonoBehaviour
     public void Teleport(Vector3 pos)
     {
         if (controller == null) controller = GetComponent<CharacterController>();
+        EnsureStateMachine();
         controller.enabled = false;
         transform.position = pos;
         controller.enabled = true;
         verticalVelocity = 0f;
-        State = PlayerState.Airborne;   // settle onto the ground next frame
+        fsm.SetState(PlayerState.Airborne);   // settle onto the ground next frame
     }
 
     // ------------------------------------------------------------------ //
@@ -147,21 +175,15 @@ public class PlayerController : MonoBehaviour
         HandleCursor();
         HandleLook();
 
-        Vector2 move = ReadMove();
-        bool run  = ReadRun();
-        bool jump = ReadJump();
+        frameMove = ReadMove();
+        frameRun  = ReadRun();
+        frameJump = ReadJump();
 
         // Entering water overrides every land state (chest below the surface).
         if (State != PlayerState.Swimming && IsUnderwater)
-            State = PlayerState.Swimming;
+            fsm.SetState(PlayerState.Swimming);
 
-        switch (State)
-        {
-            case PlayerState.Grounded: UpdateGrounded(move, run, jump); break;
-            case PlayerState.Airborne: UpdateAirborne(move); break;
-            case PlayerState.Climbing: UpdateClimbing(move, jump); break;
-            case PlayerState.Swimming: UpdateSwimming(move); break;
-        }
+        fsm.Tick(Time.deltaTime);
 
         if (transform.position.y < killY)
         {
@@ -183,8 +205,8 @@ public class PlayerController : MonoBehaviour
 
         MoveWithVertical(dir * speed);
 
-        if (WantsToClimb(move))            State = PlayerState.Climbing;
-        else if (!controller.isGrounded)   State = PlayerState.Airborne;
+        if (WantsToClimb(move))            fsm.SetState(PlayerState.Climbing);
+        else if (!controller.isGrounded)   fsm.SetState(PlayerState.Airborne);
     }
 
     void UpdateAirborne(Vector2 move)
@@ -193,9 +215,9 @@ public class PlayerController : MonoBehaviour
         MoveWithVertical(MoveDirection(move) * walkSpeed * airControl);
 
         if (controller.isGrounded)
-            State = PlayerState.Grounded;
+            fsm.SetState(PlayerState.Grounded);
         else if (verticalVelocity <= 2f && WantsToClimb(move))
-            State = PlayerState.Climbing;   // grab a wall while falling past it
+            fsm.SetState(PlayerState.Climbing);   // grab a wall while falling past it
     }
 
     void UpdateClimbing(Vector2 move, bool jump)
@@ -206,7 +228,7 @@ public class PlayerController : MonoBehaviour
         {
             // Push off the wall: detach upward, player steers away with air control.
             verticalVelocity = Mathf.Sqrt(2f * gravity * jumpHeight) * 0.8f;
-            State = PlayerState.Airborne;
+            fsm.SetState(PlayerState.Airborne);
             return;
         }
 
@@ -217,7 +239,7 @@ public class PlayerController : MonoBehaviour
         {
             // Topped out or the wall flattened — small mount boost over the ledge.
             controller.Move(Vector3.up * 0.6f + transform.forward * 0.5f);
-            State = controller.isGrounded ? PlayerState.Grounded : PlayerState.Airborne;
+            fsm.SetState(controller.isGrounded ? PlayerState.Grounded : PlayerState.Airborne);
             return;
         }
 
@@ -229,7 +251,7 @@ public class PlayerController : MonoBehaviour
         controller.Move(climb * Time.deltaTime);
 
         if (controller.isGrounded && move.y < -0.1f)
-            State = PlayerState.Grounded;   // climbed back down to walkable ground
+            fsm.SetState(PlayerState.Grounded);   // climbed back down to walkable ground
     }
 
     void UpdateSwimming(Vector2 move)
@@ -247,7 +269,7 @@ public class PlayerController : MonoBehaviour
         controller.Move(dir * Time.deltaTime);
 
         if (!IsUnderwater)
-            State = controller.isGrounded ? PlayerState.Grounded : PlayerState.Airborne;
+            fsm.SetState(controller.isGrounded ? PlayerState.Grounded : PlayerState.Airborne);
     }
 
     // ---- Helpers ------------------------------------------------------ //

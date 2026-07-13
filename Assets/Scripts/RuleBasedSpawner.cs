@@ -102,7 +102,16 @@ public class RuleBasedSpawner : MonoBehaviour
         GameObject old = GameObject.Find(ROOT_NAME);
         if (old != null)
         {
-            if (Application.isPlaying) Destroy(old); else DestroyImmediate(old);
+            if (Application.isPlaying)
+            {
+                // Deferred Destroy keeps the old props (and their colliders)
+                // alive until end of frame — rename + deactivate so same-frame
+                // placements (F2.4 villages on load) don't raycast into them.
+                old.name = ROOT_NAME + " (clearing)";
+                old.SetActive(false);
+                Destroy(old);
+            }
+            else DestroyImmediate(old);
         }
     }
 
@@ -178,7 +187,36 @@ public class RuleBasedSpawner : MonoBehaviour
         if (rule.randomYRotation)
             go.transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
         go.transform.localScale *= Random.Range(rule.scaleRange.x, rule.scaleRange.y);
+
+        // Chapter 7: a rule with a harvestable definition turns every instance
+        // into an interactable resource node (data-driven, no per-prefab code).
+        if (rule.harvestableDef != null)
+        {
+            HarvestableResource hr = go.GetComponent<HarvestableResource>();
+            if (hr == null) hr = go.AddComponent<HarvestableResource>();
+            hr.def = rule.harvestableDef;
+            EnsureInteractionCollider(go);
+        }
         return go;
+    }
+
+    // PlayerInteractor finds nodes by raycast, so a harvestable needs SOME collider.
+    // Props usually ship with one; this fallback wraps bare meshes in a box.
+    static void EnsureInteractionCollider(GameObject go)
+    {
+        if (go.GetComponentInChildren<Collider>() != null) return;
+
+        Renderer[] rends = go.GetComponentsInChildren<Renderer>();
+        BoxCollider bc = go.AddComponent<BoxCollider>();
+        if (rends.Length == 0) return;
+
+        Bounds b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        Vector3 ls = go.transform.lossyScale;
+        bc.center = go.transform.InverseTransformPoint(b.center);
+        bc.size   = new Vector3(b.size.x / Mathf.Max(0.001f, ls.x),
+                                b.size.y / Mathf.Max(0.001f, ls.y),
+                                b.size.z / Mathf.Max(0.001f, ls.z));
     }
 
     static bool RegionMatches(PlacementRule rule, TerrainType[] regions, float h)

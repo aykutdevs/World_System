@@ -28,6 +28,12 @@ public class IslandArchetype : ScriptableObject
     public Vector2 islandSizeRange = new Vector2(0.55f, 0.70f);
     public Vector2 coastlineNoiseRange = new Vector2(0.10f, 0.22f);
 
+    [Header("Environmental factors (Chapter 7 / Table 12 — health ↔ world link)")]
+    [Tooltip("Factors this island family exposes through WorldEnvironment.GetFactor(). " +
+             "A 'Cold Region' concept = another archetype asset with different factor " +
+             "assets here (e.g. temperature base -10°) — no code.")]
+    public EnvironmentalFactorDef[] environmentalFactors;
+
     /// <summary>
     /// Writes a seed-deterministic parameter combination into the generator's
     /// fields (so the Inspector always shows the active variant's values).

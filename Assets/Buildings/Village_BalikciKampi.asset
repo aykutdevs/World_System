@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7e139963232d27f45b4d5dc354ba50b1, type: 3}
+  m_Name: Village_BalikciKampi
+  m_EditorClassIdentifier: 
+  displayName: Balikci Kampi
+  buildings:
+  - plan: {fileID: 11400000, guid: 1274aaa5e3be0ea408b7dbbe2001ef4e, type: 2}
+    minCount: 2
+    maxCount: 3
+  - plan: {fileID: 11400000, guid: 36fbe7ed520dbf94aa5ce6d9122ba0d5, type: 2}
+    minCount: 0
+    maxCount: 1
+  minBuildingSpacing: 7
+  spawnChance: 0.6

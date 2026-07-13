@@ -47,6 +47,12 @@ public class PlacementRule : ScriptableObject
     [Tooltip("Random uniform scale range applied to each instance.")]
     public Vector2 scaleRange = new Vector2(0.8f, 1.3f);
 
+    [Header("Chapter 7 — Harvesting (optional)")]
+    [Tooltip("When assigned, every spawned instance gets a HarvestableResource " +
+             "component wired to this definition — the prop becomes choppable/" +
+             "collectable with zero code. Leave empty for pure decoration.")]
+    public HarvestableResourceDef harvestableDef;
+
     [Header("Settlement zones")]
     [Tooltip("Density multiplier inside reserved settlement (village) zones. " +
              "0.15 = zones stay mostly clear; 1 = ignore zones.")]

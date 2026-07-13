@@ -62,7 +62,15 @@ public class MapGenerator : MonoBehaviour
     [Tooltip("Normalized height where rounding starts ramping in (full power near 1.0).")]
     [Range(0.3f, 0.9f)] public float roundingStartHeight = 0.55f;
     [Range(0f, 1f)] public float mountainRoundingStrength = 0.85f;
-    [Range(1, 6)] public int mountainRoundingIterations = 3;
+    [Tooltip("Blur radius in base-resolution cells. This is the landform scale that survives " +
+             "at the peaks — bigger radius = broader, more dome-like summits.")]
+    [Range(2, 12)] public int mountainRoundingRadius = 6;
+    [Range(1, 4)] public int mountainRoundingPasses = 3;
+    [Tooltip("How much of the ORIGINAL peak height survives the rounding. The blur that " +
+             "rounds the summits also melts them down; this re-inflates the mountain band " +
+             "afterwards (shape stays domed, height comes back). 0 = leave flattened, " +
+             "1 = restore full original peak height.")]
+    [Range(0f, 1f)] public float peakHeightRetention = 0.8f;
 
     // ---- Single landmass guarantee ----
     [Header("Single Landmass")]
@@ -180,40 +188,85 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
-    // Altitude-weighted blur: weight ramps from 0 at roundingStartHeight to full near
-    // the peaks, so summits become domes while plains keep their detail. Uses the
-    // 8-neighbour average as the low-pass target.
+    // Altitude-weighted LARGE-RADIUS low-pass: a separable box blur (repeated passes
+    // ≈ Gaussian) builds a low-frequency "base shape" of the terrain at true landform
+    // scale, then each cell blends toward it with a weight that ramps from 0 at
+    // roundingStartHeight to full near the peaks. Summits become broad domes (rolling
+    // hills) while lowlands keep their fine detail. A small 8-neighbour kernel cannot
+    // do this — its reach is a few cells, a mountain is dozens of cells wide.
     void RoundMountains(float[,] map)
     {
         int w = map.GetLength(0);
         int h = map.GetLength(1);
-        int mult  = Mathf.Max(1, meshResolutionMultiplier);
-        int iters = mountainRoundingIterations * mult;
-        float[,] src = map;
+        int mult   = Mathf.Max(1, meshResolutionMultiplier);
+        int radius = Mathf.Max(1, mountainRoundingRadius * mult);   // world-scale radius
 
-        for (int it = 0; it < iters; it++)
+        float[,] blur = (float[,])map.Clone();
+        float[,] tmp  = new float[w, h];
+
+        for (int pass = 0; pass < mountainRoundingPasses; pass++)
         {
-            float[,] dst = (float[,])src.Clone();
-            for (int y = 1; y < h - 1; y++)
-            {
-                for (int x = 1; x < w - 1; x++)
+            for (int y = 0; y < h; y++)              // horizontal
+                for (int x = 0; x < w; x++)
                 {
-                    float v = src[x, y];
-                    float t = Mathf.InverseLerp(roundingStartHeight, 0.95f, v);
-                    if (t <= 0f) continue;
-
-                    float avg = (src[x - 1, y] + src[x + 1, y] + src[x, y - 1] + src[x, y + 1] +
-                                 src[x - 1, y - 1] + src[x + 1, y - 1] +
-                                 src[x - 1, y + 1] + src[x + 1, y + 1]) * 0.125f;
-                    dst[x, y] = Mathf.Lerp(v, avg, t * mountainRoundingStrength);
+                    float sum = 0f; int n = 0;
+                    for (int k = -radius; k <= radius; k++)
+                    {
+                        int cx = x + k;
+                        if (cx < 0 || cx >= w) continue;
+                        sum += blur[cx, y]; n++;
+                    }
+                    tmp[x, y] = sum / n;
                 }
-            }
-            src = dst;
+
+            for (int y = 0; y < h; y++)              // vertical
+                for (int x = 0; x < w; x++)
+                {
+                    float sum = 0f; int n = 0;
+                    for (int k = -radius; k <= radius; k++)
+                    {
+                        int cy = y + k;
+                        if (cy < 0 || cy >= h) continue;
+                        sum += tmp[x, cy]; n++;
+                    }
+                    blur[x, y] = sum / n;
+                }
         }
 
+        float origMax = 0f, newMax = 0f;
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
-                map[x, y] = src[x, y];
+            {
+                float v = map[x, y];
+                if (v > origMax) origMax = v;
+
+                float t = Mathf.SmoothStep(0f, 1f,
+                    Mathf.InverseLerp(roundingStartHeight, 0.8f, v));
+                if (t > 0f)
+                    map[x, y] = Mathf.Lerp(v, blur[x, y], t * mountainRoundingStrength);
+
+                if (map[x, y] > newMax) newMax = map[x, y];
+            }
+
+        // Re-inflate the mountain band: the blur rounds the summits but also melts
+        // them down; scale everything above roundingStartHeight back up so the peaks
+        // stay dome-SHAPED yet mountain-SIZED (snow/rock bands stay reachable).
+        // k is capped LOW on purpose: a narrow spike loses most of its height in the
+        // blur, and an uncapped k would scale its little dome right back into a spike.
+        // Broad mountains need k < 1.5 anyway, so only spikes ever hit the cap — they
+        // come back as modest rounded hills instead of glacial horns.
+        float targetMax = Mathf.Lerp(newMax, origMax, peakHeightRetention);
+        if (newMax > roundingStartHeight + 0.001f && targetMax > newMax)
+        {
+            float k = Mathf.Min(1.5f, (targetMax - roundingStartHeight) / (newMax - roundingStartHeight));
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float v = map[x, y];
+                    if (v > roundingStartHeight)
+                        map[x, y] = roundingStartHeight + (v - roundingStartHeight) * k;
+                }
+        }
     }
 
     // Selective relaxation: only cells whose height differs from their 4-neighbour
@@ -282,13 +335,25 @@ public class MapGenerator : MonoBehaviour
 
         if (previewOnly) return;   // Auto Update slider preview: terrain only
 
+        // Chapter 8 / F2.4: placed buildings and villages belong to the OLD
+        // island's terrain — a new island starts clean (same policy as props
+        // and characters).
+        BuildPlacer.ClearPlacedBuildings();
+        VillageSpawner.ClearVillages();
+        // Props are re-scattered later in this method, but clear them NOW: the
+        // old island's prop colliders would otherwise deflect the village
+        // placement raycasts until end of frame (deferred Destroy).
+        FindObjectOfType<RuleBasedSpawner>()?.ClearSpawned();
+
         // ---- Feature #6 follow-up pipeline ----
-        // Zones first (spawners thin their density inside them), then a clean
+        // Zones first (spawners thin their density inside them), villages next
+        // (they flatten ground, so before the NavMesh bake), then a clean
         // re-scatter of props for the new island. Grass is now rule-based only
         // (no procedural placeholder blades). AI nodes stay disabled.
         if (drawMode == DrawMode.Mesh)
         {
             FindObjectOfType<SettlementZoneFinder>()?.FindZones();
+            FindObjectOfType<VillageSpawner>()?.SpawnVillages();   // F2.4, seed-deterministic
             FindObjectOfType<RuleBasedSpawner>()?.SpawnAll();   // clears old props itself
         }
         // FindObjectOfType<AISpawnManager>()?.PlaceSpawnPoints();
